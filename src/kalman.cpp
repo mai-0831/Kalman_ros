@@ -43,10 +43,12 @@ class Kalman
         ros::Publisher estimate_centroid_pub;
 
         int observed_num = 2;
-        double sensor_accuracy = 0.25;
-        double q_noise = 0.1;
+        double sensor_accuracy = 0.2;
+        double q_noise = 0.0001;
         double delta_t = 0.07;
-        double u_noise = 0;
+        double pedestrian_speed = 0.786;
+
+        double move_distance;
 
         std::string str_inputfile = "../data/kousa_label0_verygood.csv";
         std::string str_outpoutfile = "../data/kousa_label0_vetygood_output.csv";
@@ -59,6 +61,7 @@ class Kalman
         Eigen::Matrix<double, parameter_num, parameter_num> Q_matrix;   // Process noise of covariance
         Eigen::Matrix<double, parameter_num, parameter_num> R_matrix;   // Observed noise of covariance
         Eigen::Matrix<double, parameter_num, 1> W_matrix;               // Observed noise
+        Eigen::Matrix<double, parameter_num, 1> V_matrix;               // Observed noise
 
         std::vector<Eigen::Matrix<double, parameter_num, 1>> X_pri_vec;  // Pri Estimate state
         std::vector<Eigen::Matrix<double, parameter_num, 1>> X_post_vec; // Post Estimate state
@@ -100,6 +103,8 @@ Kalman::Kalman()
     // Kalman::LoadData();
 
     // ofs(str_outpoutfile);
+    ofs << "q_noise, sensor_accuracy, delta_t, pedestrian_speed" << std::endl;
+    ofs << q_noise << "," << sensor_accuracy << "," << delta_t << "," << pedestrian_speed << std::endl;
     ofs << "cycle, cluster_num, centroid_x, centroid_y, estimate_x, estimate_y, estimate_vx, estimate_vy" << std::endl;
 
     // Parameter
@@ -132,6 +137,8 @@ Kalman::Kalman()
             0, 0, 0, 1;
     H_trans = H_.transpose();
     std::cout << "Matrix transformation formula & trans\n" << H_ << "\n\n" << H_trans << std::endl; 
+
+    move_distance = pedestrian_speed * delta_t;
 
     // // Post Estimate State and Initialize
     // X_post <<   Z_vec.at(0),
@@ -290,10 +297,10 @@ void Kalman::Filtering(void)
     std::random_device seed_gen;
     std::default_random_engine engine(seed_gen());
     std::normal_distribution<double> V_dist(0,Q_matrix(0,0));
-    std::normal_distribution<double> dV_dist(0, Q_matrix(2,0));
+    std::normal_distribution<double> dV_dist(0, Q_matrix(2,2));
 
     std::normal_distribution<double> W_dist(0, R_matrix(0,0));
-    std::normal_distribution<double> dW_dist(0, R_matrix(2,0));
+    std::normal_distribution<double> dW_dist(0, R_matrix(2,2));
 
     if(cycle != 0 && 1 < cluster_size)
     {
@@ -305,7 +312,8 @@ void Kalman::Filtering(void)
             std::cout << "1\n";
             X_post_tmp = X_post_vec.at(i); 
             std::cout << "2\n";
-            distance_vec.push_back(std::pow(X_post_tmp(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(X_post_tmp(1,0) - Z_vec.at(observed_num * i+1), 2));
+            // distance_vec.push_back(std::pow(X_post_tmp(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(X_post_tmp(1,0) - Z_vec.at(observed_num * i+1), 2));
+            distance_vec.push_back(std::pow(Z_matrix(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(Z_matrix(1,0) - Z_vec.at(observed_num * i+1), 2));
             std::cout << "4\n";
             std::cout << "distance: " << distance_vec.at(i) << std::endl;
         }
@@ -327,15 +335,15 @@ void Kalman::Filtering(void)
             // Post Estimate State and Initialize
             Eigen::Matrix<double, parameter_num, 1> X_post_ini;
             X_post_ini <<   Z_vec.at(observed_num * cluster_num),
-                        Z_vec.at(observed_num * cluster_num + 1),
-                        0.786,
-                        0.786;
+                            Z_vec.at(observed_num * cluster_num + 1),
+                            pedestrian_speed,
+                            pedestrian_speed;
             X_post_vec.push_back(X_post_ini);
             // std::cout << "Initial of estimate state :X\n" << X_post_ini << std::endl;
 
             // Post Estimate Uncertainty and Initialize
             Eigen::Matrix<double, parameter_num, parameter_num> P_post_ini;
-            P_post_ini <<   0.205, 0, 0, 0,
+            P_post_ini <<   0.2025, 0, 0, 0,
                             0, 0.2025, 0, 0,
                             0, 0, 0.025, 0,
                             0, 0, 0, 0.025;
@@ -349,14 +357,19 @@ void Kalman::Filtering(void)
                         dW_dist(engine),
                         dW_dist(engine);
 
+            V_matrix << V_dist(engine),
+                        V_dist(engine),
+                        dV_dist(engine),
+                        dV_dist(engine);
+
             // Predict
             Eigen::Matrix<double, parameter_num, 1> X_post;
             X_post = X_post_vec.at(cluster_num);
             Eigen::Matrix<double, parameter_num, 1> X_pri;
-            X_pri <<    X_post(0,0) + X_post(2,0) * delta_t + V_dist(engine),
-                        X_post(1,0) + X_post(3,0) * delta_t + V_dist(engine),
-                        X_post(2,0) + dV_dist(engine),
-                        X_post(3,0) + dV_dist(engine);
+            X_pri <<    X_post(0,0) + X_post(2,0) * delta_t + V_matrix(0,0),
+                        X_post(1,0) + X_post(3,0) * delta_t + V_matrix(1,0),
+                        X_post(2,0) + V_matrix(2,0),
+                        X_post(3,0) + V_matrix(3,0);
             // X_pri_vec.push_back(X_pri);
 
             Eigen::Matrix<double, parameter_num, parameter_num> P_post;
@@ -394,7 +407,9 @@ void Kalman::Filtering(void)
             ofs << cycle << "," << cluster_num << "," 
             << Z_vec.at(observed_num * cluster_num) << "," << Z_vec.at(observed_num * cluster_num + 1) << ","
             << X_post(0,0) << "," << X_post(1,0) << "," 
-            << X_post(2,0) << "," << X_post(3,0) << std::endl;
+            << X_post(2,0) << "," << X_post(3,0) << ","
+            << W_matrix(0,0) << "," << W_matrix(1,0) << "," << W_matrix(2,0) << "," << W_matrix(3,0) << ","
+            << V_matrix(0,0) << "," << V_matrix(1,0) << "," << V_matrix(2,0) << "," << V_matrix(3,0) << std::endl;
             std::cout << "-----------------------------------------" << std::endl;
         }
         cluster_num++;
