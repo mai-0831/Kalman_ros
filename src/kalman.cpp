@@ -45,7 +45,7 @@ class Kalman
         int observed_num = 2;
         double sensor_accuracy = 0.25;
         double q_noise = 0.1;
-        double delta_t = 0.1;
+        double delta_t = 0.07;
         double u_noise = 0;
 
         std::string str_inputfile = "../data/kousa_label0_verygood.csv";
@@ -112,10 +112,10 @@ Kalman::Kalman()
     // std::cout << matrix_1 << std::endl;
 
     // Process noise of covariance
-    Q_matrix << std::pow(q_noise,2), 0, 0, 0,
-                0, std::pow(q_noise,2), 0, 0,
-                0, 0, std::pow(q_noise,2)/delta_t, 0,
-                0, 0, 0, std::pow(q_noise,2)/delta_t;
+    Q_matrix << 0.5 * q_noise * delta_t * delta_t, 0, 0, 0,
+                0, 0.5 * q_noise * delta_t * delta_t, 0, 0,
+                0, 0, q_noise * delta_t, 0,
+                0, 0, 0, q_noise * delta_t;
     std::cout << "Process nose of covariance is: Q\n" << Q_matrix << std::endl;
 
     // Observed noise of covariance
@@ -128,8 +128,8 @@ Kalman::Kalman()
     // Matrix transformation formula
     H_ <<   1, 0, 0, 0,
             0, 1, 0, 0,
-            0, 0, 0, 0,
-            0, 0, 0, 0;
+            0, 0, 1, 0,
+            0, 0, 0, 1;
     H_trans = H_.transpose();
     std::cout << "Matrix transformation formula & trans\n" << H_ << "\n\n" << H_trans << std::endl; 
 
@@ -280,11 +280,10 @@ void Kalman::LoadData()
 }
 
 
-
 void Kalman::Filtering(void)
 {
-    // int cluster_size = Z_vec.size()/observed_num;
-    int cluster_size = 2;
+    int cluster_size = Z_vec.size()/observed_num;
+    // int cluster_size = 2;
     std::cout << "cluster_size: " << cluster_size << std::endl;
 
     // int cycle = 1;
@@ -295,6 +294,29 @@ void Kalman::Filtering(void)
 
     std::normal_distribution<double> W_dist(0, R_matrix(0,0));
     std::normal_distribution<double> dW_dist(0, R_matrix(2,0));
+
+    if(cycle != 0 && 1 < cluster_size)
+    {
+        std::cout << "In the sort" << std::endl;
+        std::vector<double> distance_vec;
+        for(int i = 0; i < cluster_size; i++)
+        {
+            Eigen::Matrix<double, parameter_num, 1> X_post_tmp;
+            std::cout << "1\n";
+            X_post_tmp = X_post_vec.at(i); 
+            std::cout << "2\n";
+            distance_vec.push_back(std::pow(X_post_tmp(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(X_post_tmp(1,0) - Z_vec.at(observed_num * i+1), 2));
+            std::cout << "4\n";
+            std::cout << "distance: " << distance_vec.at(i) << std::endl;
+        }
+        std::cout << "5\n";
+        if(distance_vec.at(0) < distance_vec.at(1))
+        {
+            std::cout << "Swappppp" << std::endl;
+            std::vector<double> Z_tmp{Z_vec.at(2), Z_vec.at(3), Z_vec.at(0), Z_vec.at(1)};
+            Z_vec = Z_tmp;
+        }        
+    }
 
     int cluster_num = 0;
     while (cluster_num < cluster_size)
