@@ -28,7 +28,7 @@
 const int parameter_num =4;
 
 static std::string str_point_topic = "/points_scan";
-static double cluster_tolerance = 0.3;
+static double cluster_tolerance = 0.35;
 static int min_cluster_size = 3;
 
 std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/kousa_label0_vetygood_output.csv");
@@ -43,15 +43,15 @@ class Kalman
         ros::Publisher estimate_centroid_pub;
 
         int observed_num = 2;
-        double sensor_accuracy = 0.2;
+        double sensor_accuracy = 0.02;
         double q_noise = 0.0001;
-        double delta_t = 0.07;
-        double pedestrian_speed = 0.786;
+        double delta_t = 0.2;
+        double pedestrian_speed = -0.1;
 
         double move_distance;
 
         std::string str_inputfile = "../data/kousa_label0_verygood.csv";
-        std::string str_outpoutfile = "../data/kousa_label0_vetygood_output.csv";
+        std::string str_outpoutfile = "../data/output.csv";
 
         std::vector<double> Z_vec;  // Loading data of observed value
         Eigen::Matrix<double, parameter_num, 1> Z_matrix;   // Observed value
@@ -105,7 +105,7 @@ Kalman::Kalman()
     // ofs(str_outpoutfile);
     ofs << "q_noise, sensor_accuracy, delta_t, pedestrian_speed" << std::endl;
     ofs << q_noise << "," << sensor_accuracy << "," << delta_t << "," << pedestrian_speed << std::endl;
-    ofs << "cycle, cluster_num, centroid_x, centroid_y, estimate_x, estimate_y, estimate_vx, estimate_vy" << std::endl;
+    ofs << "cycle, cluster_num, cluster_size, centroid_x, centroid_y, estimate_x, estimate_y, estimate_vx, estimate_vy" << std::endl;
 
     // Parameter
     std::cout << "Destinate the parameteres" << std::endl;
@@ -302,6 +302,7 @@ void Kalman::Filtering(void)
     std::normal_distribution<double> W_dist(0, R_matrix(0,0));
     std::normal_distribution<double> dW_dist(0, R_matrix(2,2));
 
+    // Sort
     if(cycle != 0 && 1 < cluster_size)
     {
         std::cout << "In the sort" << std::endl;
@@ -339,16 +340,16 @@ void Kalman::Filtering(void)
                             pedestrian_speed,
                             pedestrian_speed;
             X_post_vec.push_back(X_post_ini);
-            // std::cout << "Initial of estimate state :X\n" << X_post_ini << std::endl;
+            std::cout << "Initial of estimate state :X\n" << X_post_ini << std::endl;
 
             // Post Estimate Uncertainty and Initialize
             Eigen::Matrix<double, parameter_num, parameter_num> P_post_ini;
             P_post_ini <<   0.2025, 0, 0, 0,
                             0, 0.2025, 0, 0,
-                            0, 0, 0.025, 0,
-                            0, 0, 0, 0.025;
+                            0, 0, 0.2, 0,
+                            0, 0, 0, 0.2;
             P_post_vec.push_back(P_post_ini);
-            // std::cout << "Initial of estimate uncertainty :P\n" << P_post_ini << std::endl;
+            std::cout << "Initial of estimate uncertainty :P\n" << P_post_ini << std::endl;
 
         }else{
             // Noise
@@ -379,19 +380,26 @@ void Kalman::Filtering(void)
             // P_pri_vec.puch_back(P_pri);
 
             // Observation
-            Z_matrix << Z_vec.at(observed_num * cluster_num),
-                        Z_vec.at(observed_num * cluster_num + 1),
-                        (Z_vec.at(observed_num * cluster_num) - X_post(0,0)) / delta_t,
-                        (Z_vec.at(observed_num * cluster_num + 1) - X_post(1,0)) / delta_t;
-            
+            if(cluster_size == 2)
+            {
+                Z_matrix << Z_vec.at(observed_num * cluster_num),
+                            Z_vec.at(observed_num * cluster_num + 1),
+                            (Z_vec.at(observed_num * cluster_num) - X_post(0,0)) / delta_t,
+                            (Z_vec.at(observed_num * cluster_num + 1) - X_post(1,0)) / delta_t;
+            }else{
+                Z_matrix << X_pri(0,0),
+                            X_pri(1,0),
+                            X_pri(2,0),
+                            X_pri(3,0);
+            }
             Y_matrix  = H_ * Z_matrix + W_matrix;
             
 
-            //Update
+            // Update
             std::cout << "\nCycle " << cycle << " -------------------------------" << std::endl;
             std::cout << "Cluster Num " << cluster_num << " --------------------------" << std::endl;
             Eigen::Matrix<double, parameter_num, parameter_num> K_gain;
-            K_gain = (P_pri * H_trans) * (H_ * P_pri * H_trans + R_matrix).transpose();
+            K_gain = (P_pri * H_trans) * (H_ * P_pri * H_trans + R_matrix).inverse();
             X_post = X_pri + K_gain * (Y_matrix - X_pri);
             P_post = (matrix_1 - K_gain) * P_pri;
 
@@ -404,12 +412,15 @@ void Kalman::Filtering(void)
             std::cout << "Estimate state: \n" << X_post << "\n";
             std::cout << "Estimate uncertainty: \n" << P_post << "\n";
             
-            ofs << cycle << "," << cluster_num << "," 
+            ofs << cycle << "," << cluster_num << "," << cluster_size << ","
             << Z_vec.at(observed_num * cluster_num) << "," << Z_vec.at(observed_num * cluster_num + 1) << ","
             << X_post(0,0) << "," << X_post(1,0) << "," 
             << X_post(2,0) << "," << X_post(3,0) << ","
             << W_matrix(0,0) << "," << W_matrix(1,0) << "," << W_matrix(2,0) << "," << W_matrix(3,0) << ","
-            << V_matrix(0,0) << "," << V_matrix(1,0) << "," << V_matrix(2,0) << "," << V_matrix(3,0) << std::endl;
+            << V_matrix(0,0) << "," << V_matrix(1,0) << "," << V_matrix(2,0) << "," << V_matrix(3,0) << ","
+            << Y_matrix(0,0) << "," << Y_matrix(1,0) << ","
+            << X_pri(0,0) << "," << X_pri(1,0) << ","
+            << K_gain(0,0) << "," << K_gain(1,1) << "," << K_gain(2,2) << "," << K_gain(3,3) << std::endl;
             std::cout << "-----------------------------------------" << std::endl;
         }
         cluster_num++;
