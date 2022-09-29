@@ -310,15 +310,11 @@ void Kalman::Filtering(void)
         for(int i = 0; i < cluster_size; i++)
         {
             Eigen::Matrix<double, parameter_num, 1> X_post_tmp;
-            std::cout << "1\n";
             X_post_tmp = X_post_vec.at(i); 
-            std::cout << "2\n";
             // distance_vec.push_back(std::pow(X_post_tmp(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(X_post_tmp(1,0) - Z_vec.at(observed_num * i+1), 2));
             distance_vec.push_back(std::pow(Z_matrix(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(Z_matrix(1,0) - Z_vec.at(observed_num * i+1), 2));
-            std::cout << "4\n";
             std::cout << "distance: " << distance_vec.at(i) << std::endl;
         }
-        std::cout << "5\n";
         if(distance_vec.at(0) < distance_vec.at(1))
         {
             std::cout << "Swappppp" << std::endl;
