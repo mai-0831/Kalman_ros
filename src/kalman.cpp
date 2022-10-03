@@ -303,7 +303,7 @@ void Kalman::Filtering(void)
     std::normal_distribution<double> dW_dist(0, R_matrix(2,2));
 
     // Sort
-    if(cycle != 0 && 1 < cluster_size)
+    if(cycle != 0)
     {
         std::cout << "In the sort" << std::endl;
         std::vector<double> distance_vec;
