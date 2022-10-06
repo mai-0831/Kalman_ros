@@ -68,3 +68,20 @@ install(TARGETS kalman
         RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
         )
 
+
+# kalman_clustering
+add_executable(kalman_clustering
+src/kalman_clustering.cpp
+)
+add_dependencies(kalman_clustering
+${catkin_EXPORTED_TARGETS}
+)
+target_link_libraries(kalman_clustering
+${catkin_LIBRARIES}
+${PCL_LIBRARIES}
+)
+install(TARGETS kalman_clustering
+ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

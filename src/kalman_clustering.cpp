@@ -34,7 +34,7 @@ static double min_cluster_tolerance = 0.1;
 static int clustering_loop_num = 10;
 static int min_cluster_size = 3;
 
-std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/kousa_label0_vetygood_output.csv");
+std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/result.csv");
 
 class Kalman
 {
@@ -45,7 +45,8 @@ class Kalman
         ros::Publisher centroid_pub;
         ros::Publisher estimate_centroid_pub;
 
-        std::vector<std::array<double,3>> condidate_vv;
+        // std::vector<std::array<double,3>> condidate_vv;
+        std::vector<std::vector<double>> candidate_vv;
 
         int observed_num = 2;
         double sensor_accuracy = 0.02;
@@ -54,11 +55,6 @@ class Kalman
         double pedestrian_speed = -0.1;
 
         double cluster_tolerance = 0.35;
-
-        double move_distance;
-
-        std::string str_inputfile = "../data/kousa_label0_verygood.csv";
-        std::string str_outpoutfile = "../data/output.csv";
 
         std::vector<double> Z_vec;  // Loading data of observed value
         Eigen::Matrix<double, parameter_num, 1> Z_matrix;   // Observed value
@@ -88,7 +84,7 @@ class Kalman
         Eigen::Matrix<double, parameter_num, parameter_num> H_trans;
 
         pcl::visualization::PCLVisualizer viewer {"Euclidian Clustering"};
-        std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters;
+        std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters;  //for viewer
 
         // std::ofstream ofs("../data/kousa_label0_vetygood_output.csv");
 
@@ -100,6 +96,7 @@ class Kalman
         void Filtering();
         void PointCallback(const sensor_msgs::PointCloud2Ptr& points_msg);
         void Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud);
+        void Centroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud, const std::vector<pcl::PointIndices>& cluster_indices);
 };
 
 
@@ -107,9 +104,7 @@ Kalman::Kalman()
 {
     ros::NodeHandle nh("~");
     points_sub = nh.subscribe(str_point_topic, 1, &Kalman::PointCallback, this);
-    // Kalman::LoadData();
 
-    // ofs(str_outpoutfile);
     ofs << "q_noise, sensor_accuracy, delta_t, pedestrian_speed" << std::endl;
     ofs << q_noise << "," << sensor_accuracy << "," << delta_t << "," << pedestrian_speed << std::endl;
     ofs << "cycle, cluster_num, cluster_size, centroid_x, centroid_y, estimate_x, estimate_y, estimate_vx, estimate_vy" << std::endl;
@@ -128,14 +123,14 @@ Kalman::Kalman()
                 0, 0.5 * q_noise * delta_t * delta_t, 0, 0,
                 0, 0, q_noise * delta_t, 0,
                 0, 0, 0, q_noise * delta_t;
-    std::cout << "Process nose of covariance is: Q\n" << Q_matrix << std::endl;
+    // std::cout << "Process nose of covariance is: Q\n" << Q_matrix << std::endl;
 
     // Observed noise of covariance
     R_matrix << std::pow(sensor_accuracy,2), 0, 0, 0,
                 0, std::pow(sensor_accuracy,2), 0, 0,
                 0, 0, std::pow(sensor_accuracy,2)/delta_t, 0,
                 0, 0, 0, std::pow(sensor_accuracy,2)/delta_t;
-    std::cout << "Observed noise of covariance is: R\n" << R_matrix << std::endl; 
+    // std::cout << "Observed noise of covariance is: R\n" << R_matrix << std::endl; 
 
     // Matrix transformation formula
     H_ <<   1, 0, 0, 0,
@@ -143,25 +138,7 @@ Kalman::Kalman()
             0, 0, 1, 0,
             0, 0, 0, 1;
     H_trans = H_.transpose();
-    std::cout << "Matrix transformation formula & trans\n" << H_ << "\n\n" << H_trans << std::endl; 
-
-    move_distance = pedestrian_speed * delta_t;
-
-    // // Post Estimate State and Initialize
-    // X_post <<   Z_vec.at(0),
-    //             Z_vec.at(1),
-    //             0.786,
-    //             0.786;
-    // std::cout << "Initial of estimate state :X\n" << X_post << std::endl;
-
-    // // Post Estimate Uncertainty and Initialize
-    // P_post <<   0.205, 0, 0, 0,
-    //             0, 0.2025, 0, 0,
-    //             0, 0, 0.025, 0,
-    //             0, 0, 0, 0.025; 
-    // std::cout << "Initial of estimate uncertainty :P\n" << P_post << std::endl;
-
-    // Kalman::Filtering
+    // std::cout << "Matrix transformation formula & trans\n" << H_ << "\n\n" << H_trans << std::endl; 
 
     viewer.setBackgroundColor(1, 1, 1);
     viewer.addCoordinateSystem(1.0, "axis");
@@ -194,18 +171,39 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
     ece.setSearchMethod(tree);
     ece.setInputCloud(input_cloud);
 
-    // generate the cluster tolerance with rondom
+    // Generate the cluster tolerance with rondom
     std::random_device rd;
     std::default_random_engine eng(rd());
     std::uniform_int_distribution<int> distr(min_cluster_tolerance, max_cluster_tolerance);
 
-    for (int n = 0; n < clustering_loop_num; n++)
+
+    if (cycle == 0)
     {
-        cluster_tolerance = distr(eng);
-        ece.setClusterTolerance(cluster_tolerance); // ここの変数を変更していく
+        ece.setClusterTolerance(cluster_tolerance);
         ece.extract(cluster_indices);
+        Kalman::Centroid(input_cloud, cluster_indices);
+        // ここでZを決定する
+    }else{
+        for (int n = 0; n < clustering_loop_num; n++)
+        {
+            cluster_tolerance = distr(eng);
+            ece.setClusterTolerance(cluster_tolerance); // ここの変数を変更していく
+            ece.extract(cluster_indices);
+            Kalman::Centroid(input_cloud, cluster_indices);            
+        }
+        // 距離を計算
+        // ここでZを決定する
+        int max_index = std::distance(candidate_vv[1].begin(), 
+                                        std::max_element(candidate_vv[1].begin(), candidate_vv[1].end()));
+        Z_vec.push_back(candidate_vv[0][2*max_index]);
+        Z_vec.push_back(candidate_vv[0][2*max_index + 1]);
     }
-    
+    candidate_vv.clear();
+    Kalman::Filtering();
+}
+
+void Kalman::Centroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud, const std::vector<pcl::PointIndices>& cluster_indices)
+{
 
     // Divinding
     pcl::ExtractIndices<pcl::PointXYZ> ei;
@@ -230,14 +228,12 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
         std::cout << "centroid x: " << xyz_centroid[0] << std::endl;
         std::cout << "centroid y: " << xyz_centroid[1] << std::endl;
 
-        Z_vec.push_back(xyz_centroid[0]);
-        Z_vec.push_back(xyz_centroid[1]);
+        candidate_vv[0].push_back(xyz_centroid[0]);
+        candidate_vv[0].push_back(xyz_centroid[1]);
         // centroid.push_back(xyz_centroid[2]);
 
         clusters.push_back(tmp_clustered_cloud);
     }
-
-
 
     // Visualization
     viewer.removeAllPointClouds();
@@ -266,51 +262,9 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
     /*表示の更新*/
     viewer.spinOnce();
     clusters.clear();
-
-    //ここでクラスタリングの評価
-    //予測値との比較？？
-    //クラスタリング数 + 重心の距離
-
-
-    Kalman::Filtering();
 }
 
-
-std::vector<double> Kalman::Split(std::string& input, char delimiter)
-{
-    std::istringstream stream(input);
-    std::string field;
-    double tmp_double;
-    std::vector<double> result;
-    while(getline(stream, field, delimiter))
-    {
-        tmp_double = std::stod(field);
-        result.push_back(tmp_double);
-    }
-    // std::cout << "Load data " << result.size() << std::endl;
-    return result;
-}
-
-
-void Kalman::LoadData()
-{
-    std::ifstream ifs(str_inputfile);
-    std::string line;
-
-    std::cout <<"Load " << str_inputfile << std::endl;
-
-    while(std::getline(ifs, line))
-    {
-        std::vector<double> tmp_vec{Kalman::Split(line, ',')};
-        Z_vec.insert(Z_vec.end(), tmp_vec.begin(), tmp_vec.end());
-        // std::cout << Z_vec.at(0) << Z_vec.at(1) << Z_vec.at(2) << Z_vec.at(3) << std::endl; 
-    }
-
-    std::cout << "Load data size is " << Z_vec.size() << std::endl;
-}
-
-
-void Kalman::Filtering(void)
+void Kalman::Filtering()
 {
     int cluster_size = Z_vec.size()/observed_num;
     // int cluster_size = 2;
