@@ -5,6 +5,7 @@ find_package(catkin REQUIRED COMPONENTS
         roscpp
         std_msgs
         sensor_msgs
+        nav_msgs
         pcl_ros
         pcl_conversions
         )
@@ -35,6 +36,7 @@ catkin_package(
         roscpp
         std_msgs
         sensor_msgs
+        nav_msgs
         pcl_ros
         pcl_conversions
 )
