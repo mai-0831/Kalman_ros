@@ -57,8 +57,10 @@ class Kalman
 
         nav_msgs::OccupancyGrid map_measurement;
         nav_msgs::OccupancyGrid map_estimate;
-        int map_size = 20;
-        double map_resolution = 0.05;
+        int map_size = 100;
+        double map_resolution = 0.1;
+        double offset_x = 5.5;
+        double offset_y = 1.5;
 
         // std::vector<std::array<double,3>> condidate_vv;
         std::vector<std::vector<double>> candidate_vv;
@@ -70,7 +72,7 @@ class Kalman
         double pedestrian_speed = -0.1;
 
         double cluster_tolerance = 0.35;
-        std::array<double, 10> cluster_tolerance_arr{0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50};
+        std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
 
         std::vector<double> Z_vec;  // Loading data of observed value
         Eigen::Matrix<double, parameter_num, 1> Z_matrix;   // Observed value
@@ -142,12 +144,18 @@ Kalman::Kalman()
     map_measurement.info.resolution = map_resolution;
     map_measurement.info.width = map_size;
     map_measurement.info.height = map_size;
+    map_measurement.header.frame_id = "/laser";
+    map_measurement.info.origin.position.x = -5.5;
+    map_measurement.info.origin.position.y = -1.5;
     map_measurement.data = map_initial;
     std::cout << "map_measurement.data[0]: " << map_measurement.data[0] << std::endl;
 
     map_estimate.info.resolution = map_resolution;
     map_estimate.info.width = map_size;
     map_estimate.info.height = map_size;
+    map_estimate.header.frame_id = "/laser";
+    map_estimate.info.origin.position.x = -5.5;
+    map_estimate.info.origin.position.y = -1.5;
     map_estimate.data = map_initial;
     std::cout << "map_estimate.data[0]: " << map_estimate.data[0] << std::endl;
 
@@ -502,8 +510,8 @@ void Kalman::Filtering()
             // Occupancy Map for comparison on measurement clustering
             std::cout << "Y_matrix(0,0): " << Y_matrix(0,0) << std::endl;
             std::cout << "Y_matrix(1,0): " << Y_matrix(1,0) << std::endl;
-            int index_x = round((Y_matrix(0,0) + 10)/map_measurement.info.resolution);
-            int index_y = round((Y_matrix(1,0) + 10)/map_measurement.info.resolution);
+            int index_x = round((Y_matrix(0,0) + offset_x)/map_measurement.info.resolution);
+            int index_y = round((Y_matrix(1,0) + offset_y)/map_measurement.info.resolution);
             // std::cout << "(Y_matrix(1,0) + 10): " << Y_matrix(1,0) + 10 << std::endl;
             std::cout << "index_x: " << index_x << std::endl;
             std::cout << "index_y: " << index_y << std::endl;
@@ -535,7 +543,6 @@ void Kalman::Filtering()
             map_measurement.data[(index_y - 2) * map_measurement.info.height + index_x + 1] =
             map_measurement.data[(index_y - 1) * map_measurement.info.height + index_x + 2] = 1;
 
-            map_measurement.header.frame_id = "/laser";
             gridmap_pub_m.publish(map_measurement);
 
 
@@ -561,8 +568,8 @@ void Kalman::Filtering()
             std::cout << "X_post(0,0): " << X_post(0,0) << std::endl;
             std::cout << "X_post(1,1): " << X_post(1,0) << std::endl;
             std::cout << "(X_post(0,0) + 10) : " << X_post(0,0) + 10 << std::endl;
-            int index_x_es = round((X_post(0,0) + 10)/map_estimate.info.resolution);
-            int index_y_es = round((X_post(1,0) + 10)/map_estimate.info.resolution);
+            int index_x_es = round((X_post(0,0) + offset_x)/map_estimate.info.resolution);
+            int index_y_es = round((X_post(1,0) + offset_y)/map_estimate.info.resolution);
             std::cout << "index_x_es: " << index_x_es << std::endl;
             std::cout << "index_y_es: " << index_y_es << std::endl;
 
@@ -627,7 +634,7 @@ void Kalman::SAD()
     }
     std::cout << "Fitness_score is: " << sum << std::endl;
 
-    std::vector<int8_t> map_initial(map_size*map_size, 0); //要素数20*20, すべての要素の値0で初期化
+    std::vector<int8_t> map_initial(map_size*map_size, 0); //すべての要素の値0で初期化
     map_measurement.data = map_initial;
     map_estimate.data = map_initial;
 
