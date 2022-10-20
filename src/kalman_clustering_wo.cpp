@@ -7,7 +7,6 @@
 #include <pcl/PCLPointCloud2.h>
 #include <pcl_ros/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/registration/icp.h>   //icp matching
 
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/extract_indices.h>
@@ -29,18 +28,12 @@
 
 
 const int parameter_num =4;
-
 static std::string str_point_topic = "/points_filter";
-static double max_cluster_tolerance = 0.5;
-static double min_cluster_tolerance = 0.1;
-static int clustering_loop_num = 10;
 static int min_cluster_size = 3;
 
 std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/Gain_w.csv");
 std::ofstream ofs_toleerance("/home/itolab-mai/HDD/Kalman_ws/tolerance.csv");
-
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_candidate(new pcl::PointCloud<pcl::PointXYZ>);
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_estimate(new pcl::PointCloud<pcl::PointXYZ>);
+std::ofstream ofs_sse("/home/itolab-mai/HDD/Kalman_ws/sse.csv");
 
 class Kalman
 {
@@ -73,9 +66,11 @@ class Kalman
         double pedestrian_speed = -0.1;
 
         double cluster_tolerance = 0.35;
-        std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
+        std::array<double, 1> cluster_tolerance_arr{0.35};
+        // std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
 
         std::vector<double> Z_vec;  // Loading data of observed value
+        std::vector<std::vector<double>> Z_vv;
         Eigen::Matrix<double, parameter_num, 1> Z_matrix;   // Observed value
         Eigen::Matrix<double, parameter_num, 1> Y_matrix;  
         Eigen::Matrix<double, parameter_num,parameter_num> matrix_1;
@@ -87,23 +82,20 @@ class Kalman
 
         std::vector<Eigen::Matrix<double, parameter_num, 1>> X_pri_vec;  // Pri Estimate state
         std::vector<Eigen::Matrix<double, parameter_num, 1>> X_post_vec; // Post Estimate state
+        std::vector<Eigen::Matrix<double, parameter_num, 1>> X_post_vec_dif; // Post Estimate state
         std::vector<std::vector<Eigen::Matrix<double, parameter_num, 1>>> X_post_vv;
 
         std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> P_pri_vec;  // Pri Estimate uncertainty
         std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> P_post_vec; // Post Estimate uncertainty
+        std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> P_post_vec_dif; // Post Estimate uncertainty
         std::vector<std::vector<Eigen::Matrix<double, parameter_num, parameter_num>>> P_post_vv;
 
         std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> K_gain_vec;
+        std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> K_gain_vec_dif;
         std::vector<std::vector<Eigen::Matrix<double, parameter_num, parameter_num>>> K_gain_vv;
 
-        // std::vector<Eigen::Matrix<double, parameter_num, parameter_num>> K_gain_vec; // Kalman Gain
-
-        // Eigen::Matrix<double, parameter_num, 1> X_pri;  // Pri Estimate state
-        // Eigen::Matrix<double, parameter_num, 1> X_post; // Post Estimate state
-        // Eigen::Matrix<double, parameter_num, parameter_num> P_pri;  // Pri Estimate uncertainty
-        // Eigen::Matrix<double, parameter_num, parameter_num> P_post; // Post Estimate uncertainty
-
-        // Eigen::Matrix<double, parameter_num, parameter_num> K_gain; // Kalman Gain
+        Eigen::Matrix<double, parameter_num, parameter_num> matrix_44;
+        Eigen::Matrix<double, parameter_num, 1> matrix_41;
 
         Eigen::Matrix<double, parameter_num, parameter_num> H_;
         Eigen::Matrix<double, parameter_num, parameter_num> H_trans;
@@ -111,24 +103,20 @@ class Kalman
         pcl::visualization::PCLVisualizer viewer {"Euclidian Clustering"};
         std::vector<std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr>> clusters_vv;  //for viewer
         std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters;
-        // std::vecto
+        std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters_dif;
 
-        // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_estimate;
-        // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_candidate;
         std::vector<double> fitness_score_vec;
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         Kalman();
-        // std::vector<double> Split(std::string& input, char delimiter);
-        // void LoadData();
         void PointCallback(const sensor_msgs::PointCloud2Ptr& points_msg);
         void Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud);
         void Centroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud, const std::vector<pcl::PointIndices>& cluster_indices);
         void Filtering();
-        void ICP();
         void SAD();
         void Visualization(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud);
+        void SSE();
 };
 
 
@@ -139,12 +127,15 @@ Kalman::Kalman()
     gridmap_pub_m = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_m", 1, this);
     gridmap_pub_e = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_e", 1, this);
 
+    std::cout << "Size of K_gain_vv: " << K_gain_vv.size() << std::endl;
+
 
     // ofs << "q_noise, sensor_accuracy, delta_t, pedestrian_speed" << std::endl;
     // ofs << q_noise << "," << sensor_accuracy << "," << delta_t << "," << pedestrian_speed << std::endl;
     // ofs << "cycle, cluster_num, cluster_size, centroid_x, centroid_y, estimate_x, estimate_y, estimate_vx, estimate_vy" << std::endl;
     ofs << "Gain1_x, Gain1_y, Gain1_vx, Gain1_vy, Gain2_x, Gain2_y, Gain2_vx, Gain2_vy, Gain3_x, Gain3_y, Gain3_vx, Gain3_vy" << std::endl;
     ofs_toleerance << "tolerance" << std::endl;
+    ofs_sse << "SSE" << std::endl;
 
     std::vector<int8_t> map_initial(map_size*map_size, 0); //要素数20*20, すべての要素の値0で初期化
     map_measurement.info.resolution = map_resolution;
@@ -197,10 +188,20 @@ Kalman::Kalman()
     H_trans = H_.transpose();
     // std::cout << "Matrix transformation formula & trans\n" << H_ << "\n\n" << H_trans << std::endl; 
 
+    matrix_44 << 0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0;
+    
+    matrix_41 << 0,
+                0,
+                0,
+                0;
+
     viewer.setBackgroundColor(0.8, 0.8, 0.8);
     viewer.addCoordinateSystem(1.0, "axis");
     viewer.setCameraPosition(0.0, 0.0, 35.0, 0.0, 0.0, 0.0);
-    // Z_vec.clear();    
+
 }
 
 void Kalman::PointCallback(const sensor_msgs::PointCloud2Ptr& points_msg)
@@ -238,11 +239,14 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
         pre_cluster_size = cluster_indices.size();
         Kalman::Centroid(input_cloud, cluster_indices);
         Kalman::Filtering();
-        clusters = clusters_vv[0];
+        clusters_dif = clusters_vv[0];
+        X_post_vec_dif = X_post_vv[0];
+        P_post_vec_dif = P_post_vv[0];
+        std::cout << "Size of X_post_vec_dif: " << X_post_vec_dif.size() << std::endl; 
+        Kalman::SSE();
         Kalman::Visualization(input_cloud);
     }else{
-
-        for (int n = 0; n < clustering_loop_num; n++)
+        for (int n = 0; n < cluster_tolerance_arr.size(); n++)
         {
             std::cout << "---Cycle" << cycle << "--------------------------------------" << std::endl;
             std::cout << "Clustering loop num: " << n << std::endl;
@@ -259,10 +263,18 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
                 Kalman::Centroid(input_cloud, cluster_indices);
                 Kalman::Filtering();
                 Kalman::SAD();
-                // Kalman::ICP();
                 candidate_num++;
             }else{
                 fitness_score_vec.push_back(100000);
+                X_post_vv.emplace_back();
+                X_post_vv[candidate_num].push_back(matrix_41);
+                P_post_vv.emplace_back();
+                P_post_vv[candidate_num].push_back(matrix_44);
+                K_gain_vv.emplace_back();
+                K_gain_vv[candidate_num].push_back(matrix_44);
+                pcl::PointCloud<pcl::PointXYZ>::Ptr dummy_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+                clusters_vv.emplace_back();
+                clusters_vv[candidate_num].push_back(dummy_cloud);
             }
             cluster_indices.clear();
             // Z_vec.clear();
@@ -277,23 +289,32 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
         int min_index = std::distance(fitness_score_vec.begin(), 
                                         std::min_element(fitness_score_vec.begin(), fitness_score_vec.end()));
         std::cout << "Minimum index is: " << min_index << std::endl;
-        X_post_vec = X_post_vv[min_index];
-        P_post_vec = P_post_vv[min_index];
-        K_gain_vec = K_gain_vv[min_index];
-        clusters = clusters_vv[min_index];
+        X_post_vec_dif.clear();
+        P_post_vec_dif.clear();
+        clusters_dif.clear();
+        X_post_vec_dif = X_post_vv[min_index];
+        P_post_vec_dif = P_post_vv[min_index];
+        K_gain_vec_dif = K_gain_vv[min_index];
+        clusters_dif = clusters_vv[min_index];
 
-        for(size_t i = 0; i < K_gain_vec.size(); ++i)
+        std::cout << "Size of X_post_vv: " << X_post_vv.size() << std::endl;
+        std::cout << "Size of P_post_vv: " << P_post_vv.size() << std::endl;
+        std::cout << "Size of K_gain_vv: " << K_gain_vv.size() << std::endl;
+        std::cout << "Size of clusters_vv:  " << clusters_vv.size() << std::endl;
+        for(size_t i = 0; i < K_gain_vec_dif.size(); ++i)
         {
             Eigen::Matrix<double, parameter_num, parameter_num> K_gain_tmp;
-            K_gain_tmp = K_gain_vec.at(i);
-            std::cout << "K_gain_tmp: " << K_gain_tmp << std::endl;
+            K_gain_tmp = K_gain_vec_dif.at(i);
+            // std::cout << "K_gain_tmp: " << K_gain_tmp << std::endl;
             ofs << K_gain_tmp(0,0) << "," << K_gain_tmp(1,1) << "," << K_gain_tmp(2,2) << "," << K_gain_tmp(3,3) << ","; 
         }
         ofs << std::endl;
 
 
-        pre_cluster_size = X_post_vec.size();
+        pre_cluster_size = X_post_vec_dif.size();
         std::cout << "Pre cluster size is: " << pre_cluster_size << std::endl;
+
+        Kalman::SSE();
 
         std::stringstream ss;
         ss << "Clustering tolerance: " << cluster_tolerance_arr[min_index] << std::endl;
@@ -307,14 +328,15 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
 
         ofs_toleerance << cluster_tolerance_arr[min_index] << std::endl;
 
+        // K_gain_vec_dif.clear();
         X_post_vv.clear();
         P_post_vv.clear();
-        K_gain_vv.clear();
         fitness_score_vec.clear();
         candidate_num = 0;
     }
-
-
+    X_post_vv.clear();
+    P_post_vv.clear();
+    K_gain_vv.clear();
     input_cloud->clear();
     clusters_vv.clear();
 }
@@ -342,25 +364,20 @@ void Kalman::Centroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud, co
 
         std::cout << "cluster" << i << " centroid (x, y): " << xyz_centroid[0]  << ", " << xyz_centroid[1] << std::endl;
 
-        // if(cycle == 0)
-        // {
-            Z_vec.push_back(xyz_centroid[0]);
-            Z_vec.push_back(xyz_centroid[1]);
-        // }else{
-            // Z_vec.push_back(xyz_centroid[0]);
-            // Z_vec.push_back(xyz_centroid[1]);
+        Z_vec.push_back(xyz_centroid[0]);
+        Z_vec.push_back(xyz_centroid[1]);
 
-            // pcl::PointXYZ new_point;
-            // new_point.x = xyz_centroid[0];
-            // new_point.y = xyz_centroid[1];
-            // new_point.z = xyz_centroid[2];
-            // cloud_candidate->points.push_back(new_point);
-        // }
         std::cout << "size of Z_vec: " << Z_vec.size() << std::endl;
-        clusters_vv.emplace_back();
-        clusters_vv[candidate_num].push_back(tmp_clustered_cloud);
-    }
+        clusters.push_back(tmp_clustered_cloud);
 
+
+        // clusters_vv.emplace_back();
+        // clusters_vv[candidate_num].push_back(tmp_clustered_cloud);
+    }
+    clusters_vv.push_back(clusters);
+    clusters.clear();
+    // Z_vv.emplace_back();
+    // Z_vv[candidate_num].push_back(Z_vec);
 }
 
 void Kalman::Filtering()
@@ -378,51 +395,10 @@ void Kalman::Filtering()
     std::normal_distribution<double> W_dist(0, R_matrix(0,0));
     std::normal_distribution<double> dW_dist(0, R_matrix(2,2));
 
-    // Sort
-    // if(cycle != 0)
-    // {
-    //     std::cout << "In the sort" << std::endl;
-    //     // あとで近傍点探索を実装する
-    //     // Z_vecを並び替える
-    //     // X_post_vecと比較し合わせる
-    //     std::vector<std::vector<double>> distance_vv;
-        
-    //     for(int i = 0; i < cluster_size; i++){
-    //         std::vector<double> distance_vec;
-    //         Eigen::Matrix<double, parameter_num, 1> X_post_tmp;
-    //         X_post_tmp = X_post_vec.at(i);
-
-    //         for(int j = 0; j < cluster_size; j++){
-    //             // distance_vv.emplace_back();
-    //             distance_vec.push_back(std::pow(X_post_tmp(0,0) - Z_vec.at(observed_num * j), 2) 
-    //                                     + std::pow(X_post_tmp(1,0) - Z_vec.at(observed_num * j+1), 2));
-    //             std::cout << "Distance is: " << distance_vec.at(i) << std::endl;
-    //         }
-
-    //     }
-
-    //     std::vector<double> distance_vec;
-    //     for(int i = 0; i < cluster_size; i++)
-    //     {
-    //         Eigen::Matrix<double, parameter_num, 1> X_post_tmp;
-    //         X_post_tmp = X_post_vec.at(i);
-    //         distance_vec.push_back(std::pow(Z_matrix(0,0) - Z_vec.at(observed_num * i), 2) + std::pow(Z_matrix(1,0) - Z_vec.at(observed_num * i+1), 2));
-    //         std::cout << "distance: " << distance_vec.at(i) << std::endl;
-    //     }
-    //     if(distance_vec.at(0) < distance_vec.at(1))
-    //     {           
-    //         std::cout << "Swappppp" << std::endl;
-    //         std::vector<double> Z_tmp{Z_vec.at(2), Z_vec.at(3), Z_vec.at(0), Z_vec.at(1)};
-    //         Z_vec = Z_tmp;
-    //         std::cout << "Size of Z_vec: " << Z_vec.size() << std::endl;
-    //     }     
-    // }
-
 
     int cluster_num = 0;
     while (cluster_num < cluster_size)//cluster_sizeとは限らない
     {
-        // std::cout << "cycle: " << cycle << std::endl;
         std::cout << "Cluster_num: " << cluster_num << std::endl;
         if(cycle == 0){
             // Post Estimate State and Initialize
@@ -459,8 +435,9 @@ void Kalman::Filtering()
             // std::cout << "V_matrix:\n" << V_matrix << std::endl;
 
             // Predict
+            std::cout << "Size of X_post_vec_dif: " << X_post_vec_dif.size() << std::endl;
             Eigen::Matrix<double, parameter_num, 1> X_post;
-            X_post = X_post_vec.at(cluster_num);
+            X_post = X_post_vec_dif.at(cluster_num);
             Eigen::Matrix<double, parameter_num, 1> X_pri;
             X_pri <<    X_post(0,0) + X_post(2,0) * delta_t + V_matrix(0,0),
                         X_post(1,0) + X_post(3,0) * delta_t + V_matrix(1,0),
@@ -470,7 +447,7 @@ void Kalman::Filtering()
             // X_pri_vec.push_back(X_pri);
 
             Eigen::Matrix<double, parameter_num, parameter_num> P_post;
-            P_post = P_post_vec.at(cluster_num);
+            P_post = P_post_vec_dif.at(cluster_num);
             Eigen::Matrix<double, parameter_num, parameter_num> P_pri;
             P_pri = P_post + Q_matrix;
             // std::cout << "P_pri:\n" << X_pri << std::endl;
@@ -482,9 +459,6 @@ void Kalman::Filtering()
             // Z_vecを並び替える
             // X_post_vecと比較し合わせる
             std::vector<double> distance_vec;
-            // Eigen::Matrix<double, parameter_num, 1> X_post_tmp;
-            // X_post_tmp = X_post_vec.at(cluster_num);
-
             for(int j = 0; j < cluster_size; j++){
                 // distance_vv.emplace_back();
                 distance_vec.push_back(std::pow(X_post(0,0) - Z_vec.at(observed_num * j), 2) 
@@ -500,29 +474,6 @@ void Kalman::Filtering()
                         (Z_vec.at(observed_num * min_distance_index) - X_post(0,0)) / delta_t,
                         (Z_vec.at(observed_num * min_distance_index + 1) - X_post(1,0)) / delta_t;
 
-            // Observation
-            // if(cluster_size == pre_cluster_size)//ここの条件をあとで考える
-            // {
-            //     std::cout << "Use the observed value" << std::endl;
-            //     std::cout << "Size of Z_vec: " << Z_vec.size() << std::endl;
-            //     std::cout << "obserced_num: " << observed_num << std::endl;
-            //     std::cout << "cluster_nun: " << cluster_num << std::endl; 
-            //     std::cout << Z_vec.at(observed_num * cluster_num) << std::endl;
-            //     std::cout << Z_vec.at(observed_num * cluster_num + 1) << std::endl;
-            //     std::cout << (Z_vec.at(observed_num * cluster_num) - X_post(0,0)) / delta_t << std::endl;
-            //     std::cout << (Z_vec.at(observed_num * cluster_num + 1) - X_post(1,0)) / delta_t << std::endl;
-            //     Z_matrix << Z_vec.at(observed_num * cluster_num),
-            //                 Z_vec.at(observed_num * cluster_num + 1),
-            //                 (Z_vec.at(observed_num * cluster_num) - X_post(0,0)) / delta_t,
-            //                 (Z_vec.at(observed_num * cluster_num + 1) - X_post(1,0)) / delta_t;
-            // }else{
-            //     std::cout << "Use the X_pri" << std::endl;
-            //     Z_matrix << X_pri(0,0),
-            //                 X_pri(1,0),
-            //                 X_pri(2,0),
-            //                 X_pri(3,0);
-            // }
-            // std::cout << "Z_matrix:\n" << Z_matrix << std::endl;
             Y_matrix  = H_ * Z_matrix + W_matrix;
             
             // Occupancy Map for comparison on measurement clustering
@@ -571,18 +522,21 @@ void Kalman::Filtering()
             Eigen::Matrix<double, parameter_num, parameter_num> K_gain;
             K_gain = (P_pri * H_trans) * (H_ * P_pri * H_trans + R_matrix).inverse();
             // std::cout << "K_gain:\n" << K_gain << std::endl;
+
+            K_gain_vec.push_back(K_gain);
             
             X_post = X_pri + K_gain * (Y_matrix - X_pri);
             // std::cout << "X_post:\n" << X_post << std::endl;
             P_post = (matrix_1 - K_gain) * P_pri;
             // std::cout << "P_post:\n" << P_post << std::endl;
 
-            X_post_vv.emplace_back();
-            P_post_vv.emplace_back();
-            K_gain_vv.emplace_back();
-            X_post_vv[candidate_num].push_back(X_post);
-            P_post_vv[candidate_num].push_back(P_post);
-            K_gain_vv[candidate_num].push_back(K_gain);
+            X_post_vec.push_back(X_post);
+            P_post_vec.push_back(P_post);
+
+            // X_post_vv.emplace_back();
+            // P_post_vv.emplace_back();
+            // X_post_vv[candidate_num].push_back(X_post);
+            // P_post_vv[candidate_num].push_back(P_post);
 
             // Occupancy Map for comparison on estimated clustering
             std::cout << "X_post(0,0): " << X_post(0,0) << std::endl;
@@ -639,6 +593,18 @@ void Kalman::Filtering()
         }
         cluster_num++;
     }
+
+    X_post_vv.push_back(X_post_vec);
+    X_post_vec.clear();
+    P_post_vv.push_back(P_post_vec);
+    P_post_vec.clear();
+
+    std::cout << "Size of K_gain_vec: " << K_gain_vec.size() << std::endl;
+    std::cout << "Size of K_gain_vv before push_back: " << K_gain_vv.size() << std::endl;
+    K_gain_vv.push_back(K_gain_vec);
+    K_gain_vec.clear();
+    std::cout << "Size of K_gain_vv after push_back: " << K_gain_vv.size() << std::endl;
+
     Z_vec.clear();
     cycle++;
 }
@@ -663,38 +629,6 @@ void Kalman::SAD()
     fitness_score_vec.push_back(sum);
 }
 
-void Kalman::ICP()
-{
-    pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-    icp.setInputSource(cloud_estimate);
-    icp.setInputTarget(cloud_candidate);
-    // Set the maximum number of iterations (criterion 1)
-    icp.setMaximumIterations(20);
-    // Set the max correspondence distance to ?meter (e.g., correspondences with higher distances will be ignored)
-    icp.setMaxCorrespondenceDistance (0.5);
-
-
-    pcl::PointCloud<pcl::PointXYZ> Final;
-    icp.align(Final);
-
-    if(icp.hasConverged())
-    {
-        ROS_WARN("ICP has converged!!!!");
-        std::cout << "ICP has converged, score is " << icp.getFitnessScore() << std::endl;
-        fitness_score_vec.push_back(icp.getFitnessScore());
-    }else{
-        std::cout << "ICP has NOT converged" << std::endl;
-        fitness_score_vec.push_back(100);
-    }
-    // cloud_estimate.reset();
-    // cloud_candidate.reset();
-    // cloud_estimate->clear();
-    // cloud_candidate->clear();
-    cloud_estimate.reset(new pcl::PointCloud<pcl::PointXYZ>);
-    cloud_candidate.reset(new pcl::PointCloud<pcl::PointXYZ>);
-}
-
-
 void Kalman::Visualization(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
 {
     viewer.removeAllPointClouds();
@@ -705,10 +639,10 @@ void Kalman::Visualization(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_clou
     /*clusters*/
     double rgb[3] = {};
     const int channel = 3;  //RGB   
-    const double step = ceil(pow(clusters.size()+2, 1.0/(double)channel));  //exept (000),(111)
+    const double step = ceil(pow(clusters_dif.size()+2, 1.0/(double)channel));  //exept (000),(111)
     const double max = 1.0;
     // coloring
-    for(size_t i=0;i<clusters.size();i++){
+    for(size_t i=0;i<clusters_dif.size();i++){
             std::string name = "cluster_" + std::to_string(i);
             rgb[0] += 1/step;
             for(int j=0;j<channel-1;j++){
@@ -717,14 +651,37 @@ void Kalman::Visualization(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_clou
                             rgb[j+1] += 1/step;
                     }
             }
-            viewer.addPointCloud(clusters[i], name);
+            viewer.addPointCloud(clusters_dif[i], name);
             viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_COLOR, rgb[0], rgb[1], rgb[2], name);
             viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 5, name);
     }
     viewer.spinOnce();
     viewer.removeAllShapes();
-    clusters.clear();
+    clusters_dif.clear();
 } 
+
+void Kalman::SSE()
+{
+    double sse = 0;
+
+    for(size_t i = 0; i < clusters_dif.size(); i++)
+    {
+        pcl::PointCloud<pcl::PointXYZ>::Ptr one_cluster(new pcl::PointCloud<pcl::PointXYZ>(*clusters_dif.at(i)));
+        Eigen::Vector4f xyz_centroid;
+        pcl::compute3DCentroid(*one_cluster, xyz_centroid);
+        double cx = xyz_centroid[0];
+        double cy = xyz_centroid[1];
+
+        for(size_t j = 0; j < one_cluster->size(); j++)
+        {
+            sse += std::sqrt(std::pow((one_cluster->points[i].x - cx),2) + std::pow((one_cluster->points[i].y - cy),2));
+        }
+        std::cout << "SSE of cluster " << i << ": " << sse << std::endl;
+    }
+
+    std::cout << "SSE is: " << sse << std::endl;
+    ofs_sse << sse << std::endl;
+}
 
 
 int main(int argc, char * argv[])
