@@ -51,8 +51,8 @@ class Kalman
 
         nav_msgs::OccupancyGrid map_measurement;
         nav_msgs::OccupancyGrid map_estimate;
-        int map_size = 100;
-        double map_resolution = 0.1;
+        int map_size = 200;
+        double map_resolution = 0.05;
         double offset_x = 5.5;
         double offset_y = 1.5;
 
@@ -66,8 +66,8 @@ class Kalman
         double pedestrian_speed = -0.1;
 
         double cluster_tolerance = 0.35;
-        std::array<double, 1> cluster_tolerance_arr{0.35};
-        // std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
+        // std::array<double, 1> cluster_tolerance_arr{0.35};
+        std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
 
         std::vector<double> Z_vec;  // Loading data of observed value
         std::vector<std::vector<double>> Z_vv;
