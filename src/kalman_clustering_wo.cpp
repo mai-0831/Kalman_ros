@@ -31,9 +31,9 @@ const int parameter_num =4;
 static std::string str_point_topic = "/points_filter";
 static int min_cluster_size = 3;
 
-std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/Gain_w.csv");
-std::ofstream ofs_toleerance("/home/itolab-mai/HDD/Kalman_ws/tolerance.csv");
-std::ofstream ofs_sse("/home/itolab-mai/HDD/Kalman_ws/sse.csv");
+std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/Gain_w_velodyne.csv");
+std::ofstream ofs_toleerance("/home/itolab-mai/HDD/Kalman_ws/tolerance_velodyne.csv");
+std::ofstream ofs_sse("/home/itolab-mai/HDD/Kalman_ws/sse_velodyne.csv");
 
 class Kalman
 {
@@ -65,8 +65,8 @@ class Kalman
         double delta_t = 0.2;
         double pedestrian_speed = -0.1;
 
-        double cluster_tolerance = 0.35;
-        // std::array<double, 1> cluster_tolerance_arr{0.35};
+        double cluster_tolerance = 0.5;
+        // std::array<double, 1> cluster_tolerance_arr{0.5};
         std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
 
         std::vector<double> Z_vec;  // Loading data of observed value
@@ -122,7 +122,8 @@ class Kalman
 
 Kalman::Kalman()
 {
-    ros::NodeHandle nh("~");
+    ros::NodeHandle nh;
+    ros::NodeHandle nh_("~");
     points_sub = nh.subscribe(str_point_topic, 1, &Kalman::PointCallback, this);
     gridmap_pub_m = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_m", 1, this);
     gridmap_pub_e = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_e", 1, this);
@@ -533,11 +534,6 @@ void Kalman::Filtering()
             X_post_vec.push_back(X_post);
             P_post_vec.push_back(P_post);
 
-            // X_post_vv.emplace_back();
-            // P_post_vv.emplace_back();
-            // X_post_vv[candidate_num].push_back(X_post);
-            // P_post_vv[candidate_num].push_back(P_post);
-
             // Occupancy Map for comparison on estimated clustering
             std::cout << "X_post(0,0): " << X_post(0,0) << std::endl;
             std::cout << "X_post(1,1): " << X_post(1,0) << std::endl;
@@ -678,7 +674,6 @@ void Kalman::SSE()
         }
         std::cout << "SSE of cluster " << i << ": " << sse << std::endl;
     }
-
     std::cout << "SSE is: " << sse << std::endl;
     ofs_sse << sse << std::endl;
 }
