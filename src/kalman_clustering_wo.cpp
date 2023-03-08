@@ -28,12 +28,13 @@
 
 
 const int parameter_num =4;
-static std::string str_point_topic = "/points_filter";
-static int min_cluster_size = 3;
+static std::string str_point_topic = "/points_pass_filter";
+static int min_cluster_size = 2;
 
 std::ofstream ofs("/home/itolab-mai/HDD/Kalman_ws/Gain_w_velodyne.csv");
 std::ofstream ofs_toleerance("/home/itolab-mai/HDD/Kalman_ws/tolerance_velodyne.csv");
 std::ofstream ofs_sse("/home/itolab-mai/HDD/Kalman_ws/sse_velodyne.csv");
+std::ofstream ofs_trajectory("/home/itolab-mai/HDD/Kalman_ws/trajectory_velodyne.csv");
 
 class Kalman
 {
@@ -65,8 +66,8 @@ class Kalman
         double delta_t = 0.2;
         double pedestrian_speed = -0.1;
 
-        double cluster_tolerance = 0.5;
-        // std::array<double, 1> cluster_tolerance_arr{0.5};
+        double cluster_tolerance = 0.35;
+        // std::array<double, 1> cluster_tolerance_arr{0.15};
         std::array<double, 10> cluster_tolerance_arr{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
 
         std::vector<double> Z_vec;  // Loading data of observed value
@@ -125,6 +126,7 @@ Kalman::Kalman()
     ros::NodeHandle nh;
     ros::NodeHandle nh_("~");
     points_sub = nh.subscribe(str_point_topic, 1, &Kalman::PointCallback, this);
+    std::cout << "Subscribed " << str_point_topic << std::endl;
     gridmap_pub_m = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_m", 1, this);
     gridmap_pub_e = nh.advertise<nav_msgs::OccupancyGrid>("grid_map_e", 1, this);
 
@@ -137,13 +139,14 @@ Kalman::Kalman()
     ofs << "Gain1_x, Gain1_y, Gain1_vx, Gain1_vy, Gain2_x, Gain2_y, Gain2_vx, Gain2_vy, Gain3_x, Gain3_y, Gain3_vx, Gain3_vy" << std::endl;
     ofs_toleerance << "tolerance" << std::endl;
     ofs_sse << "SSE" << std::endl;
+    ofs_trajectory << "x1, y1, x2, y2, x3, y3" << std::endl;
 
     std::vector<int8_t> map_initial(map_size*map_size, 0); //要素数20*20, すべての要素の値0で初期化
     map_measurement.info.resolution = map_resolution;
     map_measurement.info.width = map_size;
     map_measurement.info.height = map_size;
     map_measurement.header.frame_id = "/laser";
-    map_measurement.info.origin.position.x = -5.5;
+    map_measurement.info.origin.position.x = -6.0;
     map_measurement.info.origin.position.y = -1.5;
     map_measurement.data = map_initial;
     std::cout << "map_measurement.data[0]: " << map_measurement.data[0] << std::endl;
@@ -152,7 +155,7 @@ Kalman::Kalman()
     map_estimate.info.width = map_size;
     map_estimate.info.height = map_size;
     map_estimate.header.frame_id = "/laser";
-    map_estimate.info.origin.position.x = -5.5;
+    map_estimate.info.origin.position.x = -6.0;
     map_estimate.info.origin.position.y = -1.5;
     map_estimate.data = map_initial;
     std::cout << "map_estimate.data[0]: " << map_estimate.data[0] << std::endl;
@@ -261,11 +264,13 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
 
             if(cluster_indices.size() == pre_cluster_size)
             {
+                std::cout << "Same number of clusters with pre-frame" << std::endl;
                 Kalman::Centroid(input_cloud, cluster_indices);
                 Kalman::Filtering();
                 Kalman::SAD();
                 candidate_num++;
             }else{
+                std::cout << "Deference number of clusters with pre-frame" << std::endl;
                 fitness_score_vec.push_back(100000);
                 X_post_vv.emplace_back();
                 X_post_vv[candidate_num].push_back(matrix_41);
@@ -339,7 +344,9 @@ void Kalman::Clustering(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
     P_post_vv.clear();
     K_gain_vv.clear();
     input_cloud->clear();
+    std::cout << "Size of cluster_vv before clear(): " << clusters_vv.size() << std::endl;
     clusters_vv.clear();
+    std::cout << "Size of cluster_vv after clear(): " << clusters_vv.size() << std::endl;
 }
 
 void Kalman::Centroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud, const std::vector<pcl::PointIndices>& cluster_indices)
@@ -667,6 +674,7 @@ void Kalman::SSE()
         pcl::compute3DCentroid(*one_cluster, xyz_centroid);
         double cx = xyz_centroid[0];
         double cy = xyz_centroid[1];
+        ofs_trajectory << cx << "," << cy << ",";
 
         for(size_t j = 0; j < one_cluster->size(); j++)
         {
@@ -674,6 +682,8 @@ void Kalman::SSE()
         }
         std::cout << "SSE of cluster " << i << ": " << sse << std::endl;
     }
+    ofs_trajectory << std::endl;
+
     std::cout << "SSE is: " << sse << std::endl;
     ofs_sse << sse << std::endl;
 }
